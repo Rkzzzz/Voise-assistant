@@ -18,6 +18,8 @@ class Entry {
     this.hasTime = false,
     required this.createdAt,
     this.done = false,
+    this.comment = '',
+    this.durationMin = 60,
   });
 
   final int? id;
@@ -29,22 +31,46 @@ class Entry {
   final bool hasTime;
   final DateTime createdAt;
   final bool done;
+  final String comment;
+  final int durationMin;
+
+  /// Длительность не меньше часа.
+  int get duration => durationMin < 60 ? 60 : durationMin;
+
+  DateTime? get endAt => (dueAt == null || !hasTime)
+      ? null
+      : dueAt!.add(Duration(minutes: duration));
+
+  /// Встреча со временем занимает слот в расписании.
+  bool get blocksTime => type == EntryType.meeting && hasTime && dueAt != null;
+
+  bool overlaps(Entry o) =>
+      blocksTime &&
+      o.blocksTime &&
+      dueAt!.isBefore(o.endAt!) &&
+      o.dueAt!.isBefore(endAt!);
 
   Entry copyWith({
     int? id,
+    EntryType? type,
     String? title,
     DateTime? dueAt,
+    bool clearDue = false,
     bool? hasTime,
     bool? done,
+    String? comment,
+    int? durationMin,
   }) =>
       Entry(
         id: id ?? this.id,
-        type: type,
+        type: type ?? this.type,
         title: title ?? this.title,
-        dueAt: dueAt ?? this.dueAt,
+        dueAt: clearDue ? null : (dueAt ?? this.dueAt),
         hasTime: hasTime ?? this.hasTime,
         createdAt: createdAt,
         done: done ?? this.done,
+        comment: comment ?? this.comment,
+        durationMin: durationMin ?? this.durationMin,
       );
 
   Map<String, Object?> toMap() => {
@@ -55,6 +81,8 @@ class Entry {
         'has_time': hasTime ? 1 : 0,
         'created_at': createdAt.millisecondsSinceEpoch,
         'done': done ? 1 : 0,
+        'comment': comment,
+        'duration_min': durationMin,
       };
 
   factory Entry.fromMap(Map<String, Object?> m) => Entry(
@@ -68,5 +96,7 @@ class Entry {
         createdAt:
             DateTime.fromMillisecondsSinceEpoch(m['created_at'] as int),
         done: (m['done'] as int) == 1,
+        comment: (m['comment'] as String?) ?? '',
+        durationMin: (m['duration_min'] as int?) ?? 60,
       );
 }

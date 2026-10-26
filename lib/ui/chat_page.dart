@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../assistant/assistant.dart';
+import '../models/entry.dart';
 import '../voice/voice_service.dart';
-import 'glow_background.dart';
+import 'format.dart';
 import 'theme.dart';
 
 class _Msg {
@@ -11,6 +15,7 @@ class _Msg {
   final bool fromUser;
 }
 
+/// Главный экран: большой микрофон, «таблетка» с ответом и осьминог.
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key, required this.assistant, required this.voice});
 
@@ -22,21 +27,22 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
-  static const _examples = [
-    'Напомни завтра в 10 утра позвонить Ивану',
-    'Добавь встречу с командой завтра в 15:00',
-    'Что у меня сегодня?',
-    'Найди задачу про презентацию',
-  ];
+  static const _hint =
+      'Нажмите на микрофон и скажите, например: «Напомни завтра в 10 утра позвонить Ивану»';
+  static const _mascotAspect = 406 / 180;
 
   final _msgs = <_Msg>[];
   final _ctrl = TextEditingController();
-  String _headline = 'Чем помочь?';
-  String _reply =
-      'Скажите или напишите, например: «Напомни завтра в 10 утра позвонить Ивану»';
+  String _reply = _hint;
+  String _lastUser = '';
+  String _partial = '';
   bool _listening = false;
-  bool _speak = true;
   bool _busy = false;
+  bool _typing = false;
+  Entry? _next;
+  Timer? _timer;
+
+  Assistant get _a => widget.assistant;
 
   @override
   void initState() {
@@ -44,13 +50,29 @@ class _ChatPageState extends State<ChatPage> {
     widget.voice.onListening = (v) {
       if (mounted) setState(() => _listening = v);
     };
+    _a.addListener(_refreshNext);
+    _a.settings.addListener(_onSettings);
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshNext());
+    _refreshNext();
   }
 
   @override
   void dispose() {
+    _timer?.cancel();
+    _a.removeListener(_refreshNext);
+    _a.settings.removeListener(_onSettings);
     _ctrl.dispose();
     widget.voice.stopSpeaking();
     super.dispose();
+  }
+
+  void _onSettings() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _refreshNext() async {
+    final e = await _a.nextUpcoming();
+    if (mounted) setState(() => _next = e);
   }
 
   Future<void> _send(String raw) async {
@@ -60,13 +82,15 @@ class _ChatPageState extends State<ChatPage> {
     FocusScope.of(context).unfocus();
     setState(() {
       _msgs.add(_Msg(text, fromUser: true));
-      _headline = text;
+      _lastUser = text;
+      _partial = '';
+      _typing = false;
       _busy = true;
     });
 
     AssistantReply reply;
     try {
-      reply = await widget.assistant.handle(text);
+      reply = await _a.handle(text);
     } catch (_) {
       reply = const AssistantReply('Что-то пошло не так. Попробуйте ещё раз.');
     }
@@ -76,7 +100,7 @@ class _ChatPageState extends State<ChatPage> {
       _reply = reply.text;
       _busy = false;
     });
-    if (_speak) widget.voice.speak(reply.text);
+    if (_a.settings.speak) widget.voice.speak(reply.text);
   }
 
   Future<void> _toggleMic() async {
@@ -93,17 +117,20 @@ class _ChatPageState extends State<ChatPage> {
       ));
       return;
     }
-    setState(() => _headline = 'Слушаю…');
+    setState(() {
+      _partial = '';
+      _typing = false;
+    });
     await widget.voice.listen((words, isFinal) {
       if (!mounted) return;
       if (isFinal) {
         if (words.trim().isNotEmpty) {
           _send(words);
         } else {
-          setState(() => _headline = 'Не расслышал. Повторите');
+          setState(() => _reply = 'Не расслышал. Повторите, пожалуйста.');
         }
       } else if (words.isNotEmpty) {
-        setState(() => _headline = words);
+        setState(() => _partial = words);
       }
     });
   }
@@ -111,7 +138,6 @@ class _ChatPageState extends State<ChatPage> {
   void _showHistory() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF111111),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
@@ -122,7 +148,7 @@ class _ChatPageState extends State<ChatPage> {
             ? const Padding(
                 padding: EdgeInsets.all(32),
                 child: Text('История пока пуста',
-                    style: TextStyle(color: Colors.white54, fontSize: 18)),
+                    style: TextStyle(fontSize: 18)),
               )
             : ListView.builder(
                 padding: const EdgeInsets.all(20),
@@ -140,10 +166,10 @@ class _ChatPageState extends State<ChatPage> {
                         textAlign:
                             m.fromUser ? TextAlign.right : TextAlign.left,
                         style: TextStyle(
-                          color: m.fromUser ? kAccent : Colors.white70,
+                          color: fg(ctx).withValues(alpha: m.fromUser ? 1 : 0.8),
                           fontSize: 16,
                           fontWeight:
-                              m.fromUser ? FontWeight.w700 : FontWeight.w400,
+                              m.fromUser ? FontWeight.w800 : FontWeight.w400,
                         ),
                       ),
                     ),
@@ -154,61 +180,69 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget _topBar() => Row(
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Icon(Icons.auto_awesome, color: Colors.white),
-          ),
-          Expanded(
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(20, 8, 8, 8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(32),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Ассистент',
-                        style: TextStyle(
-                            color: kAccent,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800)),
-                    const SizedBox(width: 12),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() => _speak = !_speak);
-                        if (!_speak) widget.voice.stopSpeaking();
-                      },
-                      child: CircleAvatar(
-                        radius: 18,
-                        backgroundColor: kAccent,
-                        child: Icon(
-                          _speak ? Icons.volume_up : Icons.volume_off,
-                          color: Colors.black,
-                          size: 20,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+  // ---------- Части экрана ----------
+
+  Widget _topBar(Pal p) {
+    final s = _a.settings;
+    final e = _next;
+    return Row(
+      children: [
+        ValueListenableBuilder<bool>(
+          valueListenable: widget.voice.speaking,
+          builder: (_, speaking, __) => IconButton(
+            tooltip: speaking ? 'Остановить речь' : 'Озвучка ответов',
+            onPressed: () {
+              if (speaking) {
+                widget.voice.stopSpeaking();
+              } else {
+                s.change(speak: !s.speak);
+              }
+            },
+            icon: Icon(
+              speaking
+                  ? Icons.stop_circle
+                  : (s.speak ? Icons.volume_up : Icons.volume_off),
+              size: 28,
+              color: speaking ? const Color(0xFFE5645F) : p.text,
             ),
           ),
-          IconButton(
-            tooltip: 'История',
-            onPressed: _showHistory,
-            icon: const Icon(Icons.history, color: Colors.white, size: 28),
+        ),
+        Expanded(
+          child: Column(
+            children: [
+              Text(s.assistantName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontFamily: kDisplayFont,
+                      color: p.text,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700)),
+              if (e != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text('${e.title} — ${untilText(e, _a.now)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: p.text.withValues(alpha: 0.7), fontSize: 12)),
+                ),
+            ],
           ),
-        ],
-      );
+        ),
+        IconButton(
+          tooltip: 'История',
+          onPressed: _showHistory,
+          icon: Icon(Icons.history, size: 28, color: p.text),
+        ),
+      ],
+    );
+  }
 
-  Widget _micButton(double d) => GestureDetector(
+  Widget _mic(Pal p, double d) => GestureDetector(
         onTap: _toggleMic,
         child: AnimatedScale(
-          scale: _listening ? 1.1 : 1,
+          scale: _listening ? 1.07 : 1,
           duration: const Duration(milliseconds: 500),
           curve: Curves.easeInOut,
           child: AnimatedContainer(
@@ -216,150 +250,155 @@ class _ChatPageState extends State<ChatPage> {
             width: d,
             height: d,
             decoration: BoxDecoration(
-              color: kAccent,
+              color: p.circle,
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: kAccent.withValues(alpha: _listening ? 0.55 : 0.25),
-                  blurRadius: _listening ? 60 : 30,
-                  spreadRadius: _listening ? 12 : 2,
+                  color: p.glow.withValues(alpha: _listening ? 0.6 : 0.35),
+                  blurRadius: _listening ? 70 : 40,
+                  spreadRadius: _listening ? 10 : 2,
                 ),
               ],
             ),
             child: Icon(
               _listening ? Icons.stop_rounded : Icons.mic,
-              color: Colors.black,
+              color: p.onCircle,
               size: d * 0.5,
             ),
           ),
         ),
       );
 
-  Widget _inputPill() => Container(
-        padding: const EdgeInsets.only(left: 22, right: 6),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(32),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _ctrl,
-                cursorColor: kAccent,
-                textInputAction: TextInputAction.send,
-                onSubmitted: _send,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  hintText: 'Или напишите…',
-                  hintStyle: TextStyle(color: Colors.white54),
-                ),
+  Widget _pillBody(Pal p) {
+    if (_typing) {
+      return Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _ctrl,
+              autofocus: true,
+              cursorColor: p.text,
+              textInputAction: TextInputAction.send,
+              onSubmitted: _send,
+              style: TextStyle(color: p.text, fontSize: 17),
+              decoration: InputDecoration(
+                border: InputBorder.none,
+                hintText: 'Напишите запрос…',
+                hintStyle: TextStyle(color: p.text.withValues(alpha: 0.5)),
               ),
             ),
-            IconButton(
-              onPressed: _busy ? null : () => _send(_ctrl.text),
-              icon: const Icon(Icons.arrow_upward_rounded,
-                  color: kAccent, size: 28),
-            ),
-          ],
-        ),
+          ),
+          IconButton(
+            onPressed: _busy ? null : () => _send(_ctrl.text),
+            icon: Icon(Icons.arrow_upward_rounded, color: p.text, size: 28),
+          ),
+        ],
       );
+    }
 
-  Widget _chips() => SizedBox(
-        height: 42,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: _examples.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (_, i) => GestureDetector(
-            onTap: () => _send(_examples[i]),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Text(_examples[i],
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w600)),
+    final String main;
+    if (_listening) {
+      main = _partial.isEmpty ? 'Слушаю…' : _partial;
+    } else if (_busy) {
+      main = 'Думаю…';
+    } else {
+      main = _reply;
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_lastUser.isNotEmpty && !_listening && !_busy)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text('«$_lastUser»',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: p.text.withValues(alpha: 0.6), fontSize: 13)),
+                  ),
+                Text(main,
+                    style: TextStyle(color: p.text, fontSize: 16, height: 1.35)),
+              ],
             ),
           ),
         ),
-      );
+        IconButton(
+          tooltip: 'Написать',
+          onPressed: () => setState(() => _typing = true),
+          icon: Icon(Icons.keyboard_alt_outlined,
+              color: p.text.withValues(alpha: 0.8)),
+        ),
+      ],
+    );
+  }
+
+  Widget _mascotAndPill(Pal p, double maxPillH) {
+    final w = MediaQuery.of(context).size.width * 0.62;
+    final h = w / _mascotAspect;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned(
+          left: -4,
+          top: -(h - 30),
+          child: IgnorePointer(
+            child: Image.asset(
+              'assets/mascot.png',
+              width: w,
+              errorBuilder: (_, __, ___) =>
+                  const Text('🐙', style: TextStyle(fontSize: 72)),
+            ),
+          ),
+        ),
+        Container(
+          width: double.infinity,
+          constraints: BoxConstraints(minHeight: 96, maxHeight: maxPillH),
+          padding: const EdgeInsets.fromLTRB(24, 12, 8, 12),
+          decoration: BoxDecoration(
+            color: p.pill,
+            borderRadius: BorderRadius.circular(36),
+          ),
+          child: _pillBody(p),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final p = Pal.of(context);
     final size = MediaQuery.of(context).size;
-    final keyboard = MediaQuery.of(context).viewInsets.bottom > 0;
-
     return Scaffold(
-      body: Stack(
-        children: [
-          Positioned.fill(child: GlowBackground(active: _listening)),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: [
-                  _topBar(),
-                  Expanded(
-                    child: Center(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 250),
-                        child: Text(
-                          _headline,
-                          key: ValueKey(_headline),
-                          textAlign: TextAlign.center,
-                          maxLines: 5,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: _headline.length > 40 ? 30 : 46,
-                            fontWeight: FontWeight.w900,
-                            height: 1.05,
-                            letterSpacing: -1,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (_reply.isNotEmpty)
-                    Container(
-                      width: double.infinity,
-                      constraints: BoxConstraints(
-                          maxHeight: size.height * (keyboard ? 0.16 : 0.26)),
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(28),
-                      ),
-                      child: SingleChildScrollView(
-                        child: Text(_reply,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                height: 1.35)),
-                      ),
-                    ),
-                  const SizedBox(height: 16),
-                  _micButton(keyboard ? 60 : 92),
-                  const SizedBox(height: 16),
-                  if (_msgs.isEmpty && !keyboard) ...[
-                    _chips(),
-                    const SizedBox(height: 12),
-                  ],
-                  _inputPill(),
-                  const SizedBox(height: 12),
-                ],
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            children: [
+              _topBar(p),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (_, c) {
+                    final d = math.max(
+                        48.0,
+                        math.min(
+                            240.0, math.min(c.maxWidth * 0.5, c.maxHeight - 20)));
+                    return Center(child: _mic(p, d));
+                  },
+                ),
               ),
-            ),
+              _mascotAndPill(p, size.height * 0.3),
+              const SizedBox(height: 12),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
