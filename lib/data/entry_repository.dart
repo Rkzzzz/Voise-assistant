@@ -29,11 +29,16 @@ const _marksSql = '''
   )''';
 
 class SqliteEntryRepository implements EntryRepository {
+  SqliteEntryRepository({this.profile = 0});
+
+  /// Номер профиля: у каждого пользователя своя база.
+  final int profile;
   Database? _db;
 
   Future<Database> _open() async => _db ??= await openDatabase(
-        p.join(await getDatabasesPath(), 'assistant.db'),
-        version: 2,
+        p.join(await getDatabasesPath(),
+            profile == 0 ? 'assistant.db' : 'assistant_$profile.db'),
+        version: 3,
         onCreate: (db, _) async {
           await db.execute('''
             CREATE TABLE entries(
@@ -45,7 +50,8 @@ class SqliteEntryRepository implements EntryRepository {
               created_at INTEGER NOT NULL,
               done INTEGER NOT NULL DEFAULT 0,
               comment TEXT NOT NULL DEFAULT '',
-              duration_min INTEGER NOT NULL DEFAULT 60
+              duration_min INTEGER NOT NULL DEFAULT 60,
+              place TEXT NOT NULL DEFAULT ''
             )''');
           await db.execute(_marksSql);
         },
@@ -56,6 +62,10 @@ class SqliteEntryRepository implements EntryRepository {
             await db.execute(
                 'ALTER TABLE entries ADD COLUMN duration_min INTEGER NOT NULL DEFAULT 60');
             await db.execute(_marksSql);
+          }
+          if (oldV < 3) {
+            await db.execute(
+                "ALTER TABLE entries ADD COLUMN place TEXT NOT NULL DEFAULT ''");
           }
         },
       );

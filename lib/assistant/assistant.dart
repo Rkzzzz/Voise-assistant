@@ -6,6 +6,7 @@ import '../models/entry.dart';
 import '../models/mark.dart';
 import '../nlu/date_parser.dart';
 import '../nlu/intent_parser.dart';
+import '../nlu/schedule_parser.dart';
 import '../nlu/search.dart';
 import '../nlu/text_buf.dart';
 import '../services/day_load.dart';
@@ -63,11 +64,15 @@ class Assistant extends ChangeNotifier {
     DateTime Function()? clock,
     AppSettings? settings,
     Notifier? notifier,
+    this.repoFor,
   })  : _clock = clock ?? DateTime.now,
         settings = settings ?? AppSettings.memory(),
         notifier = notifier ?? NoopNotifier();
 
-  final EntryRepository repo;
+  EntryRepository repo;
+
+  /// Создаёт хранилище для профиля по его номеру (null — профили выключены).
+  final EntryRepository Function(int profile)? repoFor;
   final AppSettings settings;
   final Notifier notifier;
   final DateTime Function() _clock;
@@ -123,6 +128,54 @@ class Assistant extends ChangeNotifier {
     if (m.id == null) return;
     await repo.removeMark(m.id!);
     notifyListeners();
+  }
+
+  /// Переключение на другой профиль пользователя.
+  Future<void> switchProfile(int i) async {
+    final make = repoFor;
+    if (make == null || i == settings.profileIndex) return;
+    settings.setProfile(i);
+    repo = make(i);
+    _last = null;
+    _pending = null;
+    await notifier.cancelAll();
+    await resyncNotifications();
+    notifyListeners();
+  }
+
+  Future<void> addProfile(String name) async {
+    final n = name.trim();
+    if (n.isEmpty || repoFor == null) return;
+    await switchProfile(settings.addProfile(n));
+  }
+
+  /// Добавляет занятия из расписания на [weeks] недель вперёд.
+  /// Возвращает число созданных записей.
+  Future<int> addSchedule(List<ScheduleItem> items,
+      {int weeks = 4, EntryType type = EntryType.meeting}) async {
+    final n = _clock();
+    final today = DateTime(n.year, n.month, n.day);
+    var count = 0;
+    for (final it in items) {
+      final first = addDays(today, (it.weekday - today.weekday) % 7);
+      for (var w = 0; w < weeks; w++) {
+        final day = addDays(first, 7 * w);
+        final due = DateTime(day.year, day.month, day.day, it.hour, it.minute);
+        if (due.isBefore(n)) continue;
+        final saved = await repo.add(Entry(
+          type: type,
+          title: it.title,
+          dueAt: due,
+          hasTime: true,
+          createdAt: n,
+          durationMin: it.durationMin,
+        ));
+        await notifier.sync(saved);
+        count++;
+      }
+    }
+    notifyListeners();
+    return count;
   }
 
   Future<void> resyncNotifications() async =>
@@ -425,13 +478,24 @@ class Assistant extends ChangeNotifier {
       due = base == null ? null : DateTime(base.year, base.month, base.day);
     }
 
+    // нельзя ставить событие на время, которое уже прошло
+    if (hasTime && due != null && due.isBefore(n)) {
+      _pending = _Pending(_PK.time)
+        ..type = type
+        ..title = title
+        ..day = day;
+      return AssistantReply('Это время уже прошло (${_when(
+          Entry(type: type, title: title, dueAt: due, hasTime: true, createdAt: n), n)}). '
+          'Назовите другое время или скажите «отмена».');
+    }
+
     final entry = Entry(
       type: type,
       title: title,
       dueAt: due,
       hasTime: hasTime,
       createdAt: n,
-      durationMin: duration == null || duration < 60 ? 60 : duration,
+      durationMin: (duration ?? kMeetingMinutes).clamp(kMinMinutes, kMaxMinutes),
     );
     _last = entry;
 

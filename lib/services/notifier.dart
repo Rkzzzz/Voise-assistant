@@ -11,6 +11,7 @@ abstract class Notifier {
   Future<void> sync(Entry e);
   Future<void> cancel(int entryId);
   Future<void> syncAll(Iterable<Entry> entries);
+  Future<void> cancelAll();
   Future<void> showTest();
 }
 
@@ -21,6 +22,8 @@ class NoopNotifier implements Notifier {
   Future<void> cancel(int entryId) async {}
   @override
   Future<void> syncAll(Iterable<Entry> entries) async {}
+  @override
+  Future<void> cancelAll() async {}
   @override
   Future<void> showTest() async {}
 }
@@ -85,6 +88,12 @@ class LocalNotifier implements Notifier {
     for (final e in entries) {
       await sync(e);
     }
+  }
+
+  @override
+  Future<void> cancelAll() async {
+    if (!_ready) return;
+    await _plugin.cancelAll();
   }
 
   @override

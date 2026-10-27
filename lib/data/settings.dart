@@ -24,9 +24,18 @@ class AppSettings extends ChangeNotifier {
   bool notifyHourBefore = true;
   bool speak = true;
 
+  /// Локальные профили: у каждого свои записи и своё обращение.
+  List<String> profileNames = ['Основной'];
+  int profileIndex = 0;
+
+  String _userKey(int i) => i == 0 ? 'userName' : 'userName_$i';
+
   void _read() {
     final p = _prefs!;
-    userName = p.getString('userName') ?? '';
+    profileNames = p.getStringList('profileNames') ?? ['Основной'];
+    profileIndex =
+        (p.getInt('profileIndex') ?? 0).clamp(0, profileNames.length - 1);
+    userName = p.getString(_userKey(profileIndex)) ?? '';
     assistantName = p.getString('assistantName') ?? 'Ассистент';
     maleVoice = p.getBool('maleVoice') ?? false;
     themeMode = ThemeMode.values[p.getInt('themeMode') ?? ThemeMode.dark.index];
@@ -53,7 +62,7 @@ class AppSettings extends ChangeNotifier {
     this.speak = speak ?? this.speak;
     final p = _prefs;
     if (p != null) {
-      p.setString('userName', this.userName);
+      p.setString(_userKey(profileIndex), this.userName);
       p.setString('assistantName', this.assistantName);
       p.setBool('maleVoice', this.maleVoice);
       p.setInt('themeMode', this.themeMode.index);
@@ -61,6 +70,23 @@ class AppSettings extends ChangeNotifier {
       p.setBool('notifyHourBefore', this.notifyHourBefore);
       p.setBool('speak', this.speak);
     }
+    notifyListeners();
+  }
+
+  /// Добавляет профиль и возвращает его номер.
+  int addProfile(String name) {
+    profileNames = [...profileNames, name];
+    final i = profileNames.length - 1;
+    _prefs?.setStringList('profileNames', profileNames);
+    _prefs?.setString(_userKey(i), name);
+    return i;
+  }
+
+  void setProfile(int i) {
+    profileIndex = i;
+    userName = _prefs?.getString(_userKey(i)) ??
+        (i == 0 ? '' : profileNames[i]);
+    _prefs?.setInt('profileIndex', i);
     notifyListeners();
   }
 }

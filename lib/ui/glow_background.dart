@@ -65,7 +65,7 @@ class _GlowBackgroundState extends State<GlowBackground>
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: const [Colors.transparent, Colors.black],
+                      colors: [Colors.transparent, Colors.black],
                       stops: [0.4, 0.8],
                     ),
                   ),

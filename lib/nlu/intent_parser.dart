@@ -115,6 +115,8 @@ class IntentParser {
       r'на\s+(?:(\d+|один|два|три|четыре|пять|шесть)\s+час(?:а|ов)?|час|'
       r'полтора\s+часа|полчаса)'
       '$_ne');
+  static final _durMin =
+      RegExp('$_nb' r'на\s+(\d+)\s+мин(?:ут[а-я]*)?' '$_ne');
   static const _words = {
     'один': 1, 'два': 2, 'три': 3, 'четыре': 4, 'пять': 5, 'шесть': 6,
   };
@@ -198,7 +200,7 @@ class IntentParser {
     if (g != null) return (int.tryParse(g) ?? _words[g] ?? 1) * 60;
     final s = m.group(0)!;
     if (s.contains('полтора')) return 90;
-    if (s.contains('полчаса')) return 60; // минимум час
+    if (s.contains('полчаса')) return 30;
     return 60;
   }
 
@@ -212,6 +214,11 @@ class IntentParser {
     final untimed = _untimed.hasMatch(b.low);
     b.cutAll(_untimed);
     int? dur;
+    final mm = _durMin.firstMatch(b.low);
+    if (mm != null) {
+      dur = int.parse(mm.group(1)!);
+      b.cut(mm);
+    }
     final dm = _dur.firstMatch(b.low);
     if (dm != null) {
       dur = _duration(dm);

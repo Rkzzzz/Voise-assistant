@@ -1,7 +1,13 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../assistant/assistant.dart';
 import '../data/settings.dart';
+import '../services/ics.dart';
+import 'schedule_page.dart';
 import '../voice/voice_service.dart';
 import 'theme.dart';
 
@@ -36,6 +42,37 @@ class _SettingsPageState extends State<SettingsPage> {
     super.dispose();
   }
 
+  Future<void> _switchProfile(int i) async {
+    await _a.switchProfile(i);
+    if (!mounted) return;
+    setState(() => _user.text = _s.userName);
+  }
+
+  Future<void> _newProfile() async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => const _NameDialog(),
+    );
+    if (name == null || name.trim().isEmpty) return;
+    await _a.addProfile(name);
+    if (!mounted) return;
+    setState(() => _user.text = _s.userName);
+  }
+
+  Future<void> _exportIcs() async {
+    final entries = await _a.repo.all();
+    final marks = await _a.allMarks();
+    final ics = buildIcs(entries, marks: marks, now: _a.now);
+    await Share.shareXFiles(
+      [
+        XFile.fromData(Uint8List.fromList(utf8.encode(ics)),
+            mimeType: 'text/calendar', name: 'assistant.ics')
+      ],
+      fileNameOverrides: ['assistant.ics'],
+      subject: 'Мои записи',
+    );
+  }
+
   Widget _title(String t) => Padding(
         padding: const EdgeInsets.fromLTRB(0, 20, 0, 8),
         child: Text(t,
@@ -58,6 +95,40 @@ class _SettingsPageState extends State<SettingsPage> {
                     fontSize: 36,
                     fontWeight: FontWeight.w300,
                     color: fg(context))),
+            _title('Профиль'),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    value: s.profileIndex,
+                    decoration:
+                        const InputDecoration(border: OutlineInputBorder()),
+                    items: [
+                      for (var i = 0; i < s.profileNames.length; i++)
+                        DropdownMenuItem(
+                            value: i, child: Text(s.profileNames[i])),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) _switchProfile(v);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  tooltip: 'Добавить профиль',
+                  onPressed: _newProfile,
+                  icon: const Icon(Icons.person_add_alt_1),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                  'У каждого профиля свои записи и календарь. '
+                  'Данные хранятся на устройстве.',
+                  style: TextStyle(
+                      fontSize: 12, color: fg(context).withValues(alpha: 0.6))),
+            ),
             _title('Имена'),
             TextField(
               controller: _user,
@@ -168,11 +239,42 @@ class _SettingsPageState extends State<SettingsPage> {
                   style: TextStyle(
                       fontSize: 12, color: fg(context).withValues(alpha: 0.6))),
             ),
+            _title('Расписание школьника'),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => SchedulePage(assistant: _a))),
+              icon: const Icon(Icons.document_scanner_outlined),
+              label: const Text('Добавить расписание школьника'),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                  'Вставьте текст расписания — ассистент найдёт занятия и кружки '
+                  'и добавит их в календарь на несколько недель.',
+                  style: TextStyle(
+                      fontSize: 12, color: fg(context).withValues(alpha: 0.6))),
+            ),
+            _title('Яндекс Календарь и другие'),
+            OutlinedButton.icon(
+              onPressed: _exportIcs,
+              icon: const Icon(Icons.ios_share),
+              label: const Text('Экспорт записей (.ics)'),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                  'Файл .ics работает без интернета: откройте его в Яндекс '
+                  'Календаре (или на calendar.yandex.ru → Импорт). Подойдёт '
+                  'и Google Календарь, и Outlook.',
+                  style: TextStyle(
+                      fontSize: 12, color: fg(context).withValues(alpha: 0.6))),
+            ),
             _title('О календаре'),
             Text(
                 'Цвет дня: серый — свободно, зелёный — до 3 ч занято, '
                 'оранжевый — до 8 ч, красный — времени почти нет. '
-                'Встречи длятся не меньше часа и не должны пересекаться. '
+                'По умолчанию встреча длится час, но время можно задать самому '
+                '(шаг 15 минут). Встречи не должны пересекаться. '
                 'Праздники — государственные РФ с фиксированными датами; '
                 'переносы выходных не учитываются.',
                 style: TextStyle(color: fg(context).withValues(alpha: 0.75))),
@@ -181,4 +283,42 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
+}
+
+/// Диалог ввода имени: контроллер живёт и освобождается внутри диалога.
+class _NameDialog extends StatefulWidget {
+  const _NameDialog();
+
+  @override
+  State<_NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<_NameDialog> {
+  final _c = TextEditingController();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Новый профиль'),
+        content: TextField(
+          controller: _c,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Имя'),
+          onSubmitted: (v) => Navigator.pop(context, v),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, _c.text),
+              child: const Text('Создать')),
+        ],
+      );
 }

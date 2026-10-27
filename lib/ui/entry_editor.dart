@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../assistant/assistant.dart';
 import '../models/entry.dart';
@@ -49,6 +50,7 @@ class _EditorSheet extends StatefulWidget {
 class _EditorSheetState extends State<_EditorSheet> {
   late final TextEditingController _title;
   late final TextEditingController _comment;
+  late final TextEditingController _place;
   late EntryType _type;
   DateTime? _date;
   TimeOfDay? _time; // null — без времени
@@ -62,8 +64,9 @@ class _EditorSheetState extends State<_EditorSheet> {
     final e = widget.entry;
     _title = TextEditingController(text: e?.title ?? '');
     _comment = TextEditingController(text: e?.comment ?? '');
+    _place = TextEditingController(text: e?.place ?? '');
     _type = e?.type ?? EntryType.task;
-    _duration = e?.duration ?? 60;
+    _duration = e?.duration ?? kMeetingMinutes;
     if (e != null) {
       final d = e.dueAt;
       _date = d == null ? null : DateTime(d.year, d.month, d.day);
@@ -80,6 +83,7 @@ class _EditorSheetState extends State<_EditorSheet> {
   void dispose() {
     _title.dispose();
     _comment.dispose();
+    _place.dispose();
     super.dispose();
   }
 
@@ -122,8 +126,16 @@ class _EditorSheetState extends State<_EditorSheet> {
       createdAt: widget.entry?.createdAt ?? _a.now,
       done: widget.entry?.done ?? false,
       comment: _comment.text.trim(),
-      durationMin: _duration < 60 ? 60 : _duration,
+      durationMin: _duration,
+      place: _place.text.trim(),
     );
+
+    // новую запись нельзя поставить на время, которое уже прошло
+    if (widget.entry == null && e.hasTime && due!.isBefore(_a.now)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Это время уже прошло. Выберите другое.')));
+      return;
+    }
 
     final c = await _a.conflictFor(e);
     if (c != null) {
@@ -156,6 +168,25 @@ class _EditorSheetState extends State<_EditorSheet> {
     if (mounted) Navigator.pop(context);
   }
 
+  String _durText(int m) {
+    final h = m ~/ 60, r = m % 60;
+    if (h == 0) return '$r мин';
+    return r == 0 ? '$h ч' : '$h ч $r мин';
+  }
+
+  Future<void> _openMap() async {
+    final q = _place.text.trim();
+    if (q.isEmpty) return;
+    final ok = await launchUrl(
+      Uri.https('yandex.ru', '/maps/', {'text': q}),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Не удалось открыть карту. Нужен интернет.')));
+    }
+  }
+
   Future<void> _delete() async {
     final e = widget.entry!;
     if (!await confirmDialog(context, 'Удалить «${e.title}»?')) return;
@@ -166,7 +197,6 @@ class _EditorSheetState extends State<_EditorSheet> {
   @override
   Widget build(BuildContext context) {
     final isMeeting = _type == EntryType.meeting;
-    final durations = {60, 90, 120, 180, 240, _duration}.toList()..sort();
     return Padding(
       padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -240,23 +270,54 @@ class _EditorSheetState extends State<_EditorSheet> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Text('Длительность:  '),
-                  DropdownButton<int>(
-                    value: _duration < 60 ? 60 : _duration,
-                    items: [
-                      for (final d in durations)
-                        DropdownMenuItem(
-                          value: d,
-                          child: Text(d % 60 == 0
-                              ? '${d ~/ 60} ч'
-                              : '${d ~/ 60} ч ${d % 60} мин'),
-                        ),
-                    ],
-                    onChanged: (v) => setState(() => _duration = v ?? 60),
+                  const Text('Длительность:'),
+                  IconButton(
+                    tooltip: 'Меньше на 15 минут',
+                    onPressed: _duration > kMinMinutes
+                        ? () => setState(() => _duration -= 15)
+                        : null,
+                    icon: const Icon(Icons.remove_circle_outline),
+                  ),
+                  Text(_durText(_duration),
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                  IconButton(
+                    tooltip: 'Больше на 15 минут',
+                    onPressed: _duration < kMaxMinutes
+                        ? () => setState(() => _duration += 15)
+                        : null,
+                    icon: const Icon(Icons.add_circle_outline),
                   ),
                 ],
               ),
+              Wrap(
+                spacing: 6,
+                children: [
+                  for (final m in const [30, 60, 90, 120, 180])
+                    ChoiceChip(
+                      label: Text(_durText(m)),
+                      selected: _duration == m,
+                      onSelected: (_) => setState(() => _duration = m),
+                    ),
+                ],
+              ),
             ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _place,
+              textCapitalization: TextCapitalization.sentences,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: isMeeting ? 'Место встречи (адрес)' : 'Место',
+                border: const OutlineInputBorder(),
+                suffixIcon: _place.text.trim().isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Показать на карте',
+                        icon: const Icon(Icons.map_outlined),
+                        onPressed: _openMap,
+                      ),
+              ),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _comment,

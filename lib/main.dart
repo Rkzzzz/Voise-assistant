@@ -15,11 +15,15 @@ Future<void> main() async {
   final settings = await AppSettings.load();
   final notifier = LocalNotifier(settings);
   await notifier.init();
+  // в браузере SQLite недоступен — используем localStorage
+  EntryRepository repoFor(int profile) => kIsWeb
+      ? PrefsEntryRepository(profile: profile)
+      : SqliteEntryRepository(profile: profile);
   final assistant = Assistant(
-    // в браузере SQLite недоступен — используем localStorage
-    kIsWeb ? PrefsEntryRepository() : SqliteEntryRepository(),
+    repoFor(settings.profileIndex),
     settings: settings,
     notifier: notifier,
+    repoFor: repoFor,
   );
   final voice = VoiceService();
   await voice.setGender(male: settings.maleVoice);

@@ -9,9 +9,13 @@ import 'entry_repository.dart';
 /// Хранилище для веб-версии: записи лежат в localStorage браузера
 /// (SQLite в браузере не работает). На телефоне используется SQLite.
 class PrefsEntryRepository implements EntryRepository {
-  static const _kEntries = 'web_entries_v1';
-  static const _kMarks = 'web_marks_v1';
-  static const _kNextId = 'web_next_id_v1';
+  PrefsEntryRepository({int profile = 0})
+      : _sfx = profile == 0 ? '' : '_p$profile';
+
+  final String _sfx;
+  String get _kEntries => 'web_entries_v1$_sfx';
+  String get _kMarks => 'web_marks_v1$_sfx';
+  String get _kNextId => 'web_next_id_v1$_sfx';
 
   SharedPreferences? _p;
   Future<SharedPreferences> get _prefs async =>

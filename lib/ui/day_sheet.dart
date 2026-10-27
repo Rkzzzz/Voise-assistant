@@ -109,6 +109,7 @@ class _DaySheetState extends State<_DaySheet> {
         subtitle: Text([
           time,
           if (status.isNotEmpty) status,
+          if (e.place.isNotEmpty) '📍 ${e.place}',
           if (e.comment.isNotEmpty) '💬 ${e.comment}',
         ].join(' • ')),
         trailing: IconButton(

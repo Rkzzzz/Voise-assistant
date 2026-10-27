@@ -1,3 +1,8 @@
+/// Длительность по умолчанию; человек может поставить своё время.
+const kMeetingMinutes = 60;
+const kMinMinutes = 15;
+const kMaxMinutes = 12 * 60;
+
 enum EntryType { task, meeting, reminder }
 
 extension EntryTypeX on EntryType {
@@ -19,7 +24,8 @@ class Entry {
     required this.createdAt,
     this.done = false,
     this.comment = '',
-    this.durationMin = 60,
+    this.durationMin = kMeetingMinutes,
+    this.place = '',
   });
 
   final int? id;
@@ -32,10 +38,13 @@ class Entry {
   final DateTime createdAt;
   final bool done;
   final String comment;
-  final int durationMin;
+  final int durationMin; // оставлено ради совместимости с БД
 
-  /// Длительность не меньше часа.
-  int get duration => durationMin < 60 ? 60 : durationMin;
+  /// Адрес / место встречи (для карты).
+  final String place;
+
+  /// Длительность в минутах (от 15 минут до 12 часов).
+  int get duration => durationMin.clamp(kMinMinutes, kMaxMinutes);
 
   DateTime? get endAt => (dueAt == null || !hasTime)
       ? null
@@ -60,6 +69,7 @@ class Entry {
     bool? done,
     String? comment,
     int? durationMin,
+    String? place,
   }) =>
       Entry(
         id: id ?? this.id,
@@ -71,6 +81,7 @@ class Entry {
         done: done ?? this.done,
         comment: comment ?? this.comment,
         durationMin: durationMin ?? this.durationMin,
+        place: place ?? this.place,
       );
 
   Map<String, Object?> toMap() => {
@@ -83,6 +94,7 @@ class Entry {
         'done': done ? 1 : 0,
         'comment': comment,
         'duration_min': durationMin,
+        'place': place,
       };
 
   factory Entry.fromMap(Map<String, Object?> m) => Entry(
@@ -97,6 +109,7 @@ class Entry {
             DateTime.fromMillisecondsSinceEpoch(m['created_at'] as int),
         done: (m['done'] as int) == 1,
         comment: (m['comment'] as String?) ?? '',
-        durationMin: (m['duration_min'] as int?) ?? 60,
+        durationMin: (m['duration_min'] as int?) ?? kMeetingMinutes,
+        place: (m['place'] as String?) ?? '',
       );
 }
