@@ -49,6 +49,52 @@ lib/
 
 `id`, `type` (задача / встреча / напоминание), `title`, `dueAt` + `hasTime` (дата с временем или только дата), `createdAt`, `done`.
 
+## Интеграция с Яндексом
+
+Подробная инструкция — в [YANDEX.md](YANDEX.md). Кратко:
+
+| Интеграция | Что даёт | Настройка |
+|---|---|---|
+| **Яндекс.Календарь** (CalDAV) | двусторонняя синхронизация задач, встреч и напоминаний | логин + пароль приложения |
+| **Yandex SpeechKit** | облачное распознавание и синтез речи, автоматический откат на системные движки | API-ключ и Folder ID Yandex Cloud |
+| **YandexGPT** | разбор свободных фраз, которые не поняли правила | тот же ключ, модель `yandexgpt-lite` |
+| **Навык Алисы** | «Алиса, что у меня завтра?», создание и выполнение записей голосом | сервер `packages/alice_server` с HTTPS |
+
+Сервер навыка — отдельный Dart-пакет; он использует ту же логику ассистента,
+что и приложение, поэтому ответы Алисы и приложения совпадают.
+
+```
+packages/
+  assistant_core/                модели, NLU, диалог, клиент YandexGPT
+    lib/assistant/assistant.dart   общая бизнес-логика
+    lib/models/                    Entry, Mark
+    lib/nlu/                       даты, намерения, поиск, расписание
+    lib/yandex/gpt.dart            YandexGPT
+  alice_server/                  навык Алисы и REST-синхронизация
+    bin/server.dart                запуск сервера
+    lib/alice_webhook.dart         протокол Яндекс.Диалогов
+    lib/api.dart                   REST API
+    lib/cloud_store.dart           хранилище (JSON-файл)
+
+lib/services/yandex/
+  caldav.dart                    клиент CalDAV и разбор iCalendar
+  calendar_sync.dart             двусторонняя синхронизация
+  speechkit.dart                 STT/TTS Yandex SpeechKit
+  cloud_sync.dart                обмен записями с сервером Алисы
+  nlu.dart                       YandexGPT как запасной разбор
+```
+
+### Запуск сервера Алисы
+
+```bash
+cd packages/alice_server
+dart pub get
+dart run bin/server.dart --port 8080 --data data/store.json
+```
+
+Вебхук для Яндекс.Диалогов: `https://<ваш-домен>/alice`. Привязка аккаунта —
+по шестизначному коду из настроек приложения: «Свяжи аккаунт, код 123456».
+
 ## Запуск
 
 ```bash

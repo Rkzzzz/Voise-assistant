@@ -26,7 +26,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _asst;
 
   Assistant get _a => widget.assistant;
-  AppSettings get _s => _a.settings;
+  AppSettings get _s => _a.appSettings;
 
   @override
   void initState() {
@@ -100,7 +100,7 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<int>(
-                    value: s.profileIndex,
+                    initialValue: s.profileIndex,
                     decoration:
                         const InputDecoration(border: OutlineInputBorder()),
                     items: [

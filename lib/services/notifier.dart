@@ -1,3 +1,4 @@
+import 'package:assistant_core/services/notifier.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -6,27 +7,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../data/settings.dart';
 import '../models/entry.dart';
 
-/// Уведомления о записях. Ассистент знает только этот интерфейс.
-abstract class Notifier {
-  Future<void> sync(Entry e);
-  Future<void> cancel(int entryId);
-  Future<void> syncAll(Iterable<Entry> entries);
-  Future<void> cancelAll();
-  Future<void> showTest();
-}
-
-class NoopNotifier implements Notifier {
-  @override
-  Future<void> sync(Entry e) async {}
-  @override
-  Future<void> cancel(int entryId) async {}
-  @override
-  Future<void> syncAll(Iterable<Entry> entries) async {}
-  @override
-  Future<void> cancelAll() async {}
-  @override
-  Future<void> showTest() async {}
-}
+export 'package:assistant_core/services/notifier.dart';
 
 /// Локальные уведомления: в момент события и за час до него.
 class LocalNotifier implements Notifier {
@@ -99,8 +80,7 @@ class LocalNotifier implements Notifier {
   @override
   Future<void> showTest() async {
     if (!_ready) return;
-    await _plugin.show(
-        0, 'Проверка', 'Уведомления работают', _details);
+    await _plugin.show(0, 'Проверка', 'Уведомления работают', _details);
   }
 
   Future<void> _at(int id, DateTime when, String title, String body) async {

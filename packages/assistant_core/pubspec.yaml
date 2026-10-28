@@ -1,0 +1,10 @@
+name: assistant_core
+description: Общая логика ассистента (модели и NLU) для приложения и сервера Алисы.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  http: ^1.2.2

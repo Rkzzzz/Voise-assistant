@@ -51,7 +51,7 @@ class _ChatPageState extends State<ChatPage> {
       if (mounted) setState(() => _listening = v);
     };
     _a.addListener(_refreshNext);
-    _a.settings.addListener(_onSettings);
+    _a.appSettings.addListener(_onSettings);
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshNext());
     _refreshNext();
   }
@@ -60,7 +60,7 @@ class _ChatPageState extends State<ChatPage> {
   void dispose() {
     _timer?.cancel();
     _a.removeListener(_refreshNext);
-    _a.settings.removeListener(_onSettings);
+    _a.appSettings.removeListener(_onSettings);
     _ctrl.dispose();
     widget.voice.stopSpeaking();
     super.dispose();
@@ -100,7 +100,7 @@ class _ChatPageState extends State<ChatPage> {
       _reply = reply.text;
       _busy = false;
     });
-    if (_a.settings.speak) widget.voice.speak(reply.text);
+    if (_a.appSettings.speak) widget.voice.speak(reply.text);
   }
 
   Future<void> _toggleMic() async {
@@ -147,8 +147,8 @@ class _ChatPageState extends State<ChatPage> {
         child: _msgs.isEmpty
             ? const Padding(
                 padding: EdgeInsets.all(32),
-                child: Text('История пока пуста',
-                    style: TextStyle(fontSize: 18)),
+                child:
+                    Text('История пока пуста', style: TextStyle(fontSize: 18)),
               )
             : ListView.builder(
                 padding: const EdgeInsets.all(20),
@@ -166,7 +166,8 @@ class _ChatPageState extends State<ChatPage> {
                         textAlign:
                             m.fromUser ? TextAlign.right : TextAlign.left,
                         style: TextStyle(
-                          color: fg(ctx).withValues(alpha: m.fromUser ? 1 : 0.8),
+                          color:
+                              fg(ctx).withValues(alpha: m.fromUser ? 1 : 0.8),
                           fontSize: 16,
                           fontWeight:
                               m.fromUser ? FontWeight.w800 : FontWeight.w400,
@@ -183,7 +184,7 @@ class _ChatPageState extends State<ChatPage> {
   // ---------- Части экрана ----------
 
   Widget _topBar(Pal p) {
-    final s = _a.settings;
+    final s = _a.appSettings;
     final e = _next;
     return Row(
       children: [
@@ -320,10 +321,12 @@ class _ChatPageState extends State<ChatPage> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            color: p.text.withValues(alpha: 0.6), fontSize: 13)),
+                            color: p.text.withValues(alpha: 0.6),
+                            fontSize: 13)),
                   ),
                 Text(main,
-                    style: TextStyle(color: p.text, fontSize: 16, height: 1.35)),
+                    style:
+                        TextStyle(color: p.text, fontSize: 16, height: 1.35)),
               ],
             ),
           ),
@@ -388,8 +391,8 @@ class _ChatPageState extends State<ChatPage> {
                   builder: (_, c) {
                     final d = math.max(
                         48.0,
-                        math.min(
-                            240.0, math.min(c.maxWidth * 0.5, c.maxHeight - 20)));
+                        math.min(240.0,
+                            math.min(c.maxWidth * 0.5, c.maxHeight - 20)));
                     return Center(child: _mic(p, d));
                   },
                 ),
