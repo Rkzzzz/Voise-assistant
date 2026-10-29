@@ -161,7 +161,11 @@ class Assistant {
   Future<void> deleteEntry(Entry e) async {
     if (e.id == null) return;
     await repo.remove(e.id!);
-    await notifier.cancel(e.id!);
+    try {
+      await notifier.cancel(e.id!);
+    } catch (_) {
+      // Отмена уведомления не критична: запись уже удалена.
+    }
     if (_last?.id == e.id) _last = null;
     _changed();
   }
@@ -214,7 +218,11 @@ class Assistant {
           createdAt: n,
           durationMin: it.durationMin,
         ));
-        await notifier.sync(saved);
+        try {
+          await notifier.sync(saved);
+        } catch (_) {
+          // Уведомление не критично: запись уже сохранена.
+        }
         count++;
       }
     }
@@ -462,7 +470,11 @@ class Assistant {
       await repo.update(stamped);
       saved = stamped;
     }
-    await notifier.sync(saved);
+    try {
+      await notifier.sync(saved);
+    } catch (_) {
+      // Уведомление не критично: запись уже сохранена.
+    }
     _last = saved;
     _changed();
     return saved;

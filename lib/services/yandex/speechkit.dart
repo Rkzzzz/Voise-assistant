@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -47,6 +48,9 @@ class SpeechKit {
 
   final SpeechKitConfig config;
   final http.Client _client;
+
+  /// Освободить keep-alive соединения.
+  void close() => _client.close();
 
   static const _sttUrl =
       'https://stt.api.cloud.yandex.net/speech/v1/stt:recognize';
@@ -146,6 +150,7 @@ class YandexSpeech {
 
   AudioRecorder? _recorder;
   AudioPlayer? _player;
+  StreamSubscription<PlayerState>? _stateSub;
   bool _recording = false;
   bool _male = false;
 
@@ -216,7 +221,9 @@ class YandexSpeech {
     final bytes = await _kit.synthesize(text, male: _male);
     if (bytes == null || bytes.isEmpty) return;
     final player = _player ??= AudioPlayer();
-    player.onPlayerStateChanged.listen((s) {
+    // Подписка одна на проигрыватель: слушать то же состояние несколько раз
+    // бессмысленно, а старая подписка никогда не освобождается.
+    _stateSub ??= player.onPlayerStateChanged.listen((s) {
       speaking.value = s == PlayerState.playing;
     });
     await player.stop();
@@ -229,6 +236,9 @@ class YandexSpeech {
   }
 
   Future<void> dispose() async {
+    await _stateSub?.cancel();
+    _stateSub = null;
+    _kit.close();
     await _recorder?.dispose();
     await _player?.dispose();
   }

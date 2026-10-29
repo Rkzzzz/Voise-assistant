@@ -91,7 +91,8 @@ class _ChatPageState extends State<ChatPage> {
     AssistantReply reply;
     try {
       reply = await _a.handle(text);
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('assistant error: $e\n$st');
       reply = const AssistantReply('Что-то пошло не так. Попробуйте ещё раз.');
     }
     if (!mounted) return;

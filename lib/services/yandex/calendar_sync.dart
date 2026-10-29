@@ -83,27 +83,38 @@ class YandexCalendarSync {
         for (final e in local)
           if (e.externalId.isNotEmpty) e.externalId: e,
       };
+      // Индекс локальных записей без externalId: «название + минуту».
+      // Позволяет за O(1) найти двойника события, а не перебором.
+      final twins = <String, List<Entry>>{};
+      for (final e in local) {
+        if (e.externalId.isNotEmpty || e.dueAt == null) continue;
+        twins.putIfAbsent(_twinKey(e.title, e.dueAt!), () => []).add(e);
+      }
+      // Что уже лежит в календаре и когда изменилось там — чтобы не
+      // отправлять одно и то же на каждом проходе.
+      final serverModified = <String, DateTime?>{
+        for (final ev in events) ev.uid: ev.lastModified,
+      };
+      final syncedNow = <String>{};
 
       for (final event in events) {
         if (event.cancelled) continue;
         final existing = byUid[event.uid];
         if (existing == null) {
           // не дублируем запись, если такое же событие уже есть локально
-          final twin = local.where((e) =>
-              e.externalId.isEmpty &&
-              e.title.trim().toLowerCase() ==
-                  event.summary.trim().toLowerCase() &&
-              e.dueAt != null &&
-              _sameMoment(e.dueAt!, event.start));
-          if (twin.isNotEmpty) {
+          final twin = twins[_twinKey(event.summary, event.start)];
+          if (twin != null && twin.isNotEmpty) {
             final e = twin.first;
-            await repo.update(e.copyWith(externalId: event.uid));
-            byUid[event.uid] = e;
+            final adopted = e.copyWith(externalId: event.uid);
+            await repo.update(adopted);
+            byUid[event.uid] = adopted;
+            syncedNow.add(event.uid);
             continue;
           }
           final created = event.toEntry(now: now);
           final saved = await repo.add(created);
           byUid[event.uid] = saved;
+          syncedNow.add(event.uid);
           pulled++;
           continue;
         }
@@ -116,26 +127,34 @@ class YandexCalendarSync {
                 ? DateTime(event.start.year, event.start.month, event.start.day)
                 : event.start,
             hasTime: !event.allDay,
-            durationMin: event.allDay ? existing.durationMin : event.durationMinutes,
+            durationMin:
+                event.allDay ? existing.durationMin : event.durationMinutes,
             place: event.location.trim(),
             comment: event.description.trim(),
             done: event.done,
             updatedAt: now,
           ));
+          syncedNow.add(event.uid);
           updated++;
         }
       }
 
-      // отправляем локальные записи, которых ещё нет в календаре
+      // отправляем только то, что изменилось локально: новые записи и те,
+      // что пользователь тронул после последней отправки
       final current = await repo.all();
       var pushed = 0;
       for (final e in current) {
         final due = e.dueAt;
         if (due == null) continue;
         if (due.isBefore(from) || !due.isBefore(to)) continue;
-        final uid = e.externalId.isNotEmpty ? e.externalId : _uidFor(e);
-        await client.putEvent(
-            uid, buildEntryIcs(e, uid: uid, stamp: now));
+        final ext = e.externalId;
+        if (ext.isNotEmpty) {
+          if (syncedNow.contains(ext))
+            continue; // только что пришли из календаря
+          if (_alreadyOnServer(ext, serverModified, e)) continue;
+        }
+        final uid = ext.isNotEmpty ? ext : _uidFor(e);
+        await client.putEvent(uid, buildEntryIcs(e, uid: uid, stamp: now));
         if (e.externalId != uid) {
           await repo.update(e.copyWith(externalId: uid));
         }
@@ -152,12 +171,28 @@ class YandexCalendarSync {
     } catch (e) {
       return CalendarSyncResult(
           error: 'Не удалось связаться с Яндекс.Календарём: $e');
+    } finally {
+      // фоновая синхронизация запускается каждые 15 минут — соединения
+      // созданного здесь клиента надо закрывать
+      if (_client == null) client.close();
     }
   }
 
   String _uidFor(Entry e) =>
       'entry-${settings.profileIndex}-${e.id ?? e.createdAt.millisecondsSinceEpoch}'
       '@voice-assistant';
+
+  /// Ключ для быстрого поиска двойника: название + минута.
+  static String _twinKey(String title, DateTime due) =>
+      '${title.trim().toLowerCase()}|${due.millisecondsSinceEpoch ~/ 60000}';
+
+  /// Уже есть на сервере и не изменилось с тех пор?
+  static bool _alreadyOnServer(
+      String ext, Map<String, DateTime?> serverModified, Entry e) {
+    final m = serverModified[ext];
+    if (m == null) return false; // сервер не сообщил — лучше отправить
+    return !e.lastModified.isAfter(m);
+  }
 
   static bool _sameMoment(DateTime a, DateTime b) =>
       a.difference(b).inMinutes.abs() < 1;

@@ -92,7 +92,9 @@ class CloudStore {
   Future<void> save() async {
     final file = File(path);
     await file.parent.create(recursive: true);
-    final tmp = File('$path.tmp');
+    // Уникальный tmp-имень, чтобы два параллельных save не перезаписывали
+    // друг друга в один файл. rename атомарен на одной ФС.
+    final tmp = File('$path.tmp.${DateTime.now().millisecondsSinceEpoch}');
     await tmp.writeAsString(jsonEncode({
       'users': _users.values.map((u) => u.toJson()).toList(),
       'pairCodes': [
@@ -107,8 +109,8 @@ class CloudStore {
     await tmp.rename(path);
   }
 
-  String _token() => List.generate(32, (_) => _rnd.nextInt(16).toRadixString(16))
-      .join();
+  String _token() =>
+      List.generate(32, (_) => _rnd.nextInt(16).toRadixString(16)).join();
 
   Future<CloudUser> register({String? name}) async {
     final id = 'u_${_token().substring(0, 12)}';
@@ -140,8 +142,8 @@ class CloudStore {
   Future<String> createPairCode(CloudUser user) async {
     _pairCodes.removeWhere((_, c) => c.expired);
     final code = (100000 + _rnd.nextInt(900000)).toString();
-    _pairCodes[code] = PairCode(
-        user.id, DateTime.now().add(const Duration(minutes: 15)));
+    _pairCodes[code] =
+        PairCode(user.id, DateTime.now().add(const Duration(minutes: 15)));
     await save();
     return code;
   }

@@ -47,6 +47,10 @@ class CloudSync {
         'Authorization': 'Bearer ${settings.cloudSyncToken.trim()}',
       };
 
+  /// Все обращения к серверу ограничены по времени: зависший хост не должен
+  /// держать кнопку «Синхронизировать» нажатой бесконечно.
+  static const _timeout = Duration(seconds: 30);
+
   /// Регистрирует аккаунт на сервере и сохраняет токен.
   Future<CloudSyncResult> register({String name = ''}) async {
     if (!settings.cloudSyncEnabled || _base.isEmpty) {
@@ -55,11 +59,13 @@ class CloudSync {
           error: true);
     }
     try {
-      final res = await _client.post(
-        Uri.parse('$_base/api/register'),
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-        body: jsonEncode({'name': name, 'profile': profile}),
-      );
+      final res = await _client
+          .post(
+            Uri.parse('$_base/api/register'),
+            headers: {'Content-Type': 'application/json; charset=utf-8'},
+            body: jsonEncode({'name': name, 'profile': profile}),
+          )
+          .timeout(_timeout);
       if (res.statusCode != 200) {
         return CloudSyncResult(
             message: 'Сервер ответил ${res.statusCode}.', error: true);
@@ -82,11 +88,13 @@ class CloudSync {
           message: 'Сначала создайте аккаунт на сервере.', error: true);
     }
     try {
-      final res = await _client.post(
-        Uri.parse('$_base/api/pair'),
-        headers: _headers,
-        body: '{}',
-      );
+      final res = await _client
+          .post(
+            Uri.parse('$_base/api/pair'),
+            headers: _headers,
+            body: '{}',
+          )
+          .timeout(_timeout);
       if (res.statusCode != 200) {
         return CloudSyncResult(
             message: 'Сервер ответил ${res.statusCode}.', error: true);
@@ -118,7 +126,7 @@ class CloudSync {
               'marks': marks.map((m) => m.toMap()).toList(),
             }),
           )
-          .timeout(const Duration(seconds: 30));
+          .timeout(_timeout);
       if (res.statusCode != 200) {
         return CloudSyncResult(
             message: res.statusCode == 401
@@ -140,17 +148,40 @@ class CloudSync {
     }
   }
 
+  /// Подпись записи: по ней находим локальный двойник серверной записи,
+  /// которой сервер только что назначил `cloud:<id>`.
+  static String _sig(Entry e) =>
+      '${e.title}|${e.dueAt?.millisecondsSinceEpoch ?? -1}'
+      '|${e.createdAt.millisecondsSinceEpoch}';
+
   Future<int> _merge(List<Entry> serverEntries) async {
     final local = await repo.all();
     final byExternal = <String, Entry>{
       for (final e in local)
         if (e.externalId.isNotEmpty) e.externalId: e,
     };
+    // Локальные записи без externalId: сервер присвоит им `cloud:<id>` и
+    // вернёт обратно. Без этого соответствия мы добавили бы их второй раз.
+    final bySignature = <String, Entry>{
+      for (final e in local)
+        if (e.externalId.isEmpty) _sig(e): e,
+    };
     var changed = 0;
     for (final s in serverEntries) {
       if (s.externalId.isEmpty) continue;
-      final mine = byExternal[s.externalId];
+      var mine = byExternal[s.externalId];
       if (mine == null) {
+        final twin = bySignature.remove(_sig(s));
+        if (twin != null) {
+          // это наша же запись, просто сервер добавил ей externalId
+          final adopted = twin.copyWith(
+            externalId: s.externalId,
+            updatedAt: s.updatedAt,
+          );
+          await repo.update(adopted);
+          byExternal[s.externalId] = adopted;
+          continue;
+        }
         await repo.add(s.copyWith(id: null));
         changed++;
         continue;
@@ -182,11 +213,13 @@ class CloudSync {
           message: 'Синхронизация не настроена.', error: true);
     }
     try {
-      final res = await _client.post(
-        Uri.parse('$_base/api/unlink'),
-        headers: _headers,
-        body: '{}',
-      );
+      final res = await _client
+          .post(
+            Uri.parse('$_base/api/unlink'),
+            headers: _headers,
+            body: '{}',
+          )
+          .timeout(_timeout);
       if (res.statusCode != 200) {
         return CloudSyncResult(
             message: 'Сервер ответил ${res.statusCode}.', error: true);
@@ -201,15 +234,17 @@ class CloudSync {
   Future<void> push(Entry e) async {
     if (!_configured) return;
     try {
-      await _client.post(
-        Uri.parse('$_base/api/sync'),
-        headers: _headers,
-        body: jsonEncode({
-          'profile': profile,
-          'entries': [e.toMap()],
-          'marks': <Mark>[],
-        }),
-      );
+      await _client
+          .post(
+            Uri.parse('$_base/api/sync'),
+            headers: _headers,
+            body: jsonEncode({
+              'profile': profile,
+              'entries': [e.toMap()],
+              'marks': <Mark>[],
+            }),
+          )
+          .timeout(_timeout);
     } catch (_) {
       // тихо: синхронизация повторится вручную
     }

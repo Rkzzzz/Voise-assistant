@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:timezone/timezone.dart' as tz;
 import 'package:xml/xml.dart';
 
 import '../../models/entry.dart';
@@ -243,6 +244,9 @@ class CalDavClient {
             '$props</d:propfind>',
       );
 
+  /// Освободить соединения. Клиент создаётся на одну синхронизацию.
+  void close() => _client.close();
+
   Future<String> _request(
     String method,
     String url, {
@@ -261,7 +265,9 @@ class CalDavClient {
       req.body = body;
     }
     final res = await _client.send(req).timeout(config.timeout);
-    final text = utf8.decode(await res.stream.toBytes());
+    // Чтение тела тоже должно быть ограничено: иначе зависший сервер
+    // держит запрос открытым бесконечно.
+    final text = await utf8.decodeStream(res.stream).timeout(config.timeout);
     if (!okStatuses.contains(res.statusCode)) {
       throw CalDavException(res.statusCode, _short(text));
     }
@@ -322,10 +328,10 @@ class IcsEvent {
 }
 
 /// Разбирает все VEVENT из ICS-текста. Понимает переносы строк, UTC,
-/// «плавающее» время и события на весь день.
+/// смещение от UTC, явную таймзону (TZID) и события на весь день.
 List<IcsEvent> parseIcsEvents(String ics) {
-  final unfolded = ics.replaceAll(RegExp(r'\r?\n[ \t]'), '');
-  final lines = unfolded.split(RegExp(r'\r?\n'));
+  final unfolded = ics.replaceAll(_reFold, '');
+  final lines = unfolded.split(_reNewline);
   final result = <IcsEvent>[];
 
   Map<String, String>? props;
@@ -412,9 +418,31 @@ int _colonIndex(String line) {
   return -1;
 }
 
+// Регулярные выражения собираются один раз: разбор ICS идёт на каждое
+// событие при каждой синхронизации.
+final _reFold = RegExp(r'\r?\n[ 	]');
+final _reNewline = RegExp(r'\r?\n');
+final _reDateOnly = RegExp(r'^(\d{4})(\d{2})(\d{2})$');
+final _reUtc = RegExp(r'^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$');
+final _reLocal = RegExp(r'^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$');
+final _reOffset = RegExp(
+    r'^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})([+-])(\d{2})(\d{2})$');
+
+List<int> _ymdhms(RegExpMatch m) => [
+      int.parse(m.group(1)!),
+      int.parse(m.group(2)!),
+      int.parse(m.group(3)!),
+      int.parse(m.group(4)!),
+      int.parse(m.group(5)!),
+      int.parse(m.group(6)!),
+    ];
+
+/// Время из строки ICS. [params] — параметры строки DTSTART/DTEND:
+/// без них `TZID=Europe/Moscow` читался бы как время телефона.
 DateTime? _parseIcsDate(String value, Map<String, String> params) {
   final v = value.trim();
-  final dateOnly = RegExp(r'^(\d{4})(\d{2})(\d{2})$').firstMatch(v);
+
+  final dateOnly = _reDateOnly.firstMatch(v);
   if (dateOnly != null) {
     return DateTime(
       int.parse(dateOnly.group(1)!),
@@ -422,31 +450,50 @@ DateTime? _parseIcsDate(String value, Map<String, String> params) {
       int.parse(dateOnly.group(3)!),
     );
   }
-  final utc =
-      RegExp(r'^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$').firstMatch(v);
+
+  final utc = _reUtc.firstMatch(v);
   if (utc != null) {
-    return DateTime.utc(
-      int.parse(utc.group(1)!),
-      int.parse(utc.group(2)!),
-      int.parse(utc.group(3)!),
-      int.parse(utc.group(4)!),
-      int.parse(utc.group(5)!),
-      int.parse(utc.group(6)!),
-    ).toLocal();
+    final p = _ymdhms(utc);
+    return DateTime.utc(p[0], p[1], p[2], p[3], p[4], p[5]).toLocal();
   }
-  final local =
-      RegExp(r'^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$').firstMatch(v);
+
+  // Явное смещение: «20261030T100000+0300». Раньше такая строка не
+  // разбирались и событие молча пропадало.
+  final off = _reOffset.firstMatch(v);
+  if (off != null) {
+    final p = _ymdhms(off);
+    final sign = off.group(7) == '-' ? -1 : 1;
+    final shift = Duration(
+        hours: int.parse(off.group(8)!), minutes: int.parse(off.group(9)!));
+    return DateTime.utc(p[0], p[1], p[2], p[3], p[4], p[5])
+        .subtract(Duration(seconds: sign * shift.inSeconds))
+        .toLocal();
+  }
+
+  final local = _reLocal.firstMatch(v);
   if (local != null) {
-    return DateTime(
-      int.parse(local.group(1)!),
-      int.parse(local.group(2)!),
-      int.parse(local.group(3)!),
-      int.parse(local.group(4)!),
-      int.parse(local.group(5)!),
-      int.parse(local.group(6)!),
-    );
+    final p = _ymdhms(local);
+    final tzid = params['TZID'];
+    if (tzid != null && tzid.isNotEmpty) {
+      final zoned = _fromTzid(tzid, p);
+      if (zoned != null) return zoned;
+    }
+    return DateTime(p[0], p[1], p[2], p[3], p[4], p[5]);
   }
   return null;
+}
+
+/// Момент «wall clock в зоне [tzid]», приведённый к часовой зоне устройства.
+DateTime? _fromTzid(String tzid, List<int> p) {
+  try {
+    return tz.TZDateTime(
+            tz.getLocation(tzid), p[0], p[1], p[2], p[3], p[4], p[5])
+        .toLocal();
+  } catch (_) {
+    // База часовых зон не инициализирована или зона неизвестна —
+    // разберём как локальное время, как раньше.
+    return null;
+  }
 }
 
 String _unescape(String s) => s
