@@ -7,6 +7,16 @@ abstract class Notifier {
   Future<void> syncAll(Iterable<Entry> entries);
   Future<void> cancelAll();
   Future<void> showTest();
+
+  /// Выдаёт ли система точные будильники. Если false, время уведомления
+  /// может сильно сдвинуться — стоит предложить выдать разрешение.
+  bool get exactAlarmsAvailable;
+
+  /// Обновляет [exactAlarmsAvailable] после возвращения из настроек системы.
+  Future<void> refreshExactAlarms();
+
+  /// Запрашивает разрешение на точные будильники и возвращает его статус.
+  Future<bool> requestExactAlarms();
 }
 
 class NoopNotifier implements Notifier {
@@ -20,4 +30,10 @@ class NoopNotifier implements Notifier {
   Future<void> cancelAll() async {}
   @override
   Future<void> showTest() async {}
+  @override
+  bool get exactAlarmsAvailable => true;
+  @override
+  Future<void> refreshExactAlarms() async {}
+  @override
+  Future<bool> requestExactAlarms() async => true;
 }
